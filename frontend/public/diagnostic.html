@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenWan 路由诊断</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .info { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .warning { color: orange; }
+        h2 { border-bottom: 2px solid #409eff; padding-bottom: 10px; }
+        pre { background: #f0f0f0; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>OpenWan 前端路由诊断工具</h1>
+    
+    <div class="info">
+        <h2>使用说明</h2>
+        <p>1. 在OpenWan前端页面（http://localhost:3000/）打开浏览器开发者工具（F12）</p>
+        <p>2. 切换到"Console"标签</p>
+        <p>3. 复制下面的代码并粘贴到Console中执行</p>
+        <p>4. 查看输出结果</p>
+    </div>
+
+    <div class="info">
+        <h2>诊断代码</h2>
+        <pre>
+// OpenWan 路由诊断脚本
+console.log('========== OpenWan 路由诊断 ==========');
+
+// 1. 检查路由器实例
+if (typeof $router !== 'undefined') {
+    console.log('✅ Vue Router 实例已找到');
+    
+    // 2. 获取所有路由
+    const allRoutes = $router.options.routes;
+    console.log('📋 总路由数量:', allRoutes.length);
+    
+    // 3. 查找根路由
+    const rootRoute = allRoutes.find(r => r.path === '/');
+    if (rootRoute) {
+        console.log('✅ 根路由已找到');
+        console.log('📋 根路由的children数量:', rootRoute.children?.length || 0);
+        
+        // 4. 查找Admin路由
+        const adminRoute = rootRoute.children?.find(r => r.path === 'admin');
+        if (adminRoute) {
+            console.log('✅ Admin路由已找到');
+            console.log('📋 Admin路由配置:', {
+                path: adminRoute.path,
+                name: adminRoute.name,
+                redirect: adminRoute.redirect,
+                meta: adminRoute.meta,
+                childrenCount: adminRoute.children?.length || 0
+            });
+            
+            // 5. 列出所有admin子路由
+            if (adminRoute.children && adminRoute.children.length > 0) {
+                console.log('✅ Admin子路由列表:');
+                adminRoute.children.forEach((child, index) => {
+                    console.log(`  ${index + 1}. ${child.path} - ${child.meta?.title || '无标题'}`);
+                });
+                
+                // 6. 检查新增的路由
+                const hasPermissions = adminRoute.children.some(c => c.path === 'permissions');
+                const hasLevels = adminRoute.children.some(c => c.path === 'levels');
+                
+                console.log('🔍 新增路由检查:');
+                console.log('  permissions:', hasPermissions ? '✅ 已找到' : '❌ 未找到');
+                console.log('  levels:', hasLevels ? '✅ 已找到' : '❌ 未找到');
+                
+                if (hasPermissions) {
+                    const permRoute = adminRoute.children.find(c => c.path === 'permissions');
+                    console.log('  permissions详情:', {
+                        name: permRoute.name,
+                        component: permRoute.component ? '✅ 已定义' : '❌ 未定义',
+                        meta: permRoute.meta
+                    });
+                }
+                
+                if (hasLevels) {
+                    const levelRoute = adminRoute.children.find(c => c.path === 'levels');
+                    console.log('  levels详情:', {
+                        name: levelRoute.name,
+                        component: levelRoute.component ? '✅ 已定义' : '❌ 未定义',
+                        meta: levelRoute.meta
+                    });
+                }
+            } else {
+                console.log('❌ Admin路由没有children或children为空');
+            }
+        } else {
+            console.log('❌ Admin路由未找到');
+        }
+    } else {
+        console.log('❌ 根路由未找到');
+    }
+} else {
+    console.log('❌ Vue Router实例未找到，请确保在Vue应用中执行此脚本');
+    console.log('💡 提示：在页面加载完成后，在Console中输入以下代码查看路由：');
+    console.log('   document.querySelector("#app").__vue_app__.config.globalProperties.$router');
+}
+
+console.log('========================================');
+console.log('');
+console.log('📝 如果看到所有✅，说明路由配置正确');
+console.log('📝 如果有❌，请按照提示检查对应的配置');
+console.log('');
+console.log('💡 下一步：检查菜单渲染');
+console.log('   在Elements标签中查找class="sidebar-menu"的元素');
+console.log('   查看其中是否包含7个el-menu-item（在系统管理子菜单下）');
+        </pre>
+    </div>
+
+    <div class="info">
+        <h2>预期输出</h2>
+        <pre>
+========== OpenWan 路由诊断 ==========
+✅ Vue Router 实例已找到
+📋 总路由数量: 2
+✅ 根路由已找到
+📋 根路由的children数量: 4
+✅ Admin路由已找到
+📋 Admin路由配置: { path: 'admin', name: 'Admin', redirect: '/admin/users', meta: {...}, childrenCount: 7 }
+✅ Admin子路由列表:
+  1. users - 用户管理
+  2. groups - 组管理
+  3. roles - 角色管理
+  4. permissions - 权限管理
+  5. levels - 等级管理
+  6. categories - 分类管理
+  7. catalog - 目录配置
+🔍 新增路由检查:
+  permissions: ✅ 已找到
+  levels: ✅ 已找到
+  permissions详情: { name: 'AdminPermissions', component: '✅ 已定义', meta: {...} }
+  levels详情: { name: 'AdminLevels', component: '✅ 已定义', meta: {...} }
+========================================
+        </pre>
+    </div>
+
+    <div class="info">
+        <h2>如果诊断失败</h2>
+        <p class="error"><strong>问题1：路由未找到</strong></p>
+        <p>解决方案：强制刷新浏览器 (Ctrl+Shift+R)</p>
+        
+        <p class="error"><strong>问题2：children数量不是7</strong></p>
+        <p>解决方案：清除浏览器缓存或使用无痕模式</p>
+        
+        <p class="error"><strong>问题3：permissions或levels未找到</strong></p>
+        <p>解决方案：执行以下命令重启前端服务器</p>
+        <pre>
+pkill -f vite
+cd /home/ec2-user/openwan/frontend
+npm run dev
+        </pre>
+    </div>
+
+    <div class="info">
+        <h2>快速测试</h2>
+        <p>直接访问以下URL测试路由是否工作：</p>
+        <ul>
+            <li><a href="http://localhost:3000/admin/permissions" target="_blank">http://localhost:3000/admin/permissions</a></li>
+            <li><a href="http://localhost:3000/admin/levels" target="_blank">http://localhost:3000/admin/levels</a></li>
+        </ul>
+        <p>如果能正常显示页面，说明路由配置正确，只是菜单渲染有问题。</p>
+    </div>
+</body>
+</html>

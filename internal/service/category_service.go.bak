@@ -1,0 +1,68 @@
+package service
+
+import (
+	"context"
+
+	"github.com/openwan/media-asset-management/internal/models"
+	"github.com/openwan/media-asset-management/internal/repository"
+)
+
+// CategoryService handles category-related business logic
+type CategoryService struct {
+	categoryRepo repository.CategoryRepository
+}
+
+// NewCategoryService creates a new category service
+func NewCategoryService(categoryRepo repository.CategoryRepository) *CategoryService {
+	return &CategoryService{categoryRepo: categoryRepo}
+}
+
+// GetAllCategories retrieves all categories
+func (s *CategoryService) GetAllCategories(ctx context.Context) ([]models.Category, error) {
+	return s.categoryRepo.FindAll(ctx)
+}
+
+// GetCategoryByID retrieves a category by ID
+func (s *CategoryService) GetCategoryByID(ctx context.Context, id uint) (*models.Category, error) {
+	return s.categoryRepo.FindByID(ctx, id)
+}
+
+// CreateCategory creates a new category
+func (s *CategoryService) CreateCategory(ctx context.Context, category *models.Category) error {
+	// TODO: Update path based on parent
+	return s.categoryRepo.Create(ctx, category)
+}
+
+// UpdateCategory updates category information
+func (s *CategoryService) UpdateCategory(ctx context.Context, id uint, updates map[string]interface{}) error {
+	return s.categoryRepo.Update(ctx, id, updates)
+}
+
+// DeleteCategory deletes a category
+func (s *CategoryService) DeleteCategory(ctx context.Context, id uint) error {
+	// TODO: Check if category has children
+	// TODO: Check if category has files
+	return s.categoryRepo.Delete(ctx, id)
+}
+
+// GetCategoryChildren retrieves child categories
+func (s *CategoryService) GetCategoryChildren(ctx context.Context, parentID uint) ([]models.Category, error) {
+	return s.categoryRepo.FindByParentID(ctx, parentID)
+}
+
+// GetCategoryPath retrieves the full path of a category
+func (s *CategoryService) GetCategoryPath(ctx context.Context, id uint) ([]models.Category, error) {
+	var path []models.Category
+	currentID := id
+
+	for currentID > 0 {
+		category, err := s.categoryRepo.FindByID(ctx, currentID)
+		if err != nil {
+			return nil, err
+		}
+		path = append([]models.Category{*category}, path...)
+		currentID = category.ParentID
+	}
+
+	return path, nil
+}

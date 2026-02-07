@@ -1,0 +1,111 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: openwan-api-hpa
+  namespace: openwan
+  labels:
+    app: openwan-api
+    component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: openwan-api
+  minReplicas: 2
+  maxReplicas: 20
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5 minutes before scaling down
+      policies:
+      - type: Percent
+        value: 50  # Scale down 50% of pods at a time
+        periodSeconds: 60
+      - type: Pods
+        value: 2   # Or scale down 2 pods at a time
+        periodSeconds: 60
+      selectPolicy: Min  # Use the policy that scales down the least
+    scaleUp:
+      stabilizationWindowSeconds: 0  # Scale up immediately
+      policies:
+      - type: Percent
+        value: 100  # Double the pods
+        periodSeconds: 60
+      - type: Pods
+        value: 4    # Or add 4 pods
+        periodSeconds: 60
+      selectPolicy: Max  # Use the policy that scales up the most
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70  # Target 70% CPU utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80  # Target 80% memory utilization
+  # Custom metrics (requires metrics server and custom metrics API)
+  # - type: Pods
+  #   pods:
+  #     metric:
+  #       name: http_requests_per_second
+  #     target:
+  #       type: AverageValue
+  #       averageValue: "1000"
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: openwan-worker-hpa
+  namespace: openwan
+  labels:
+    app: openwan-worker
+    component: transcoding
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: openwan-worker
+  minReplicas: 2
+  maxReplicas: 10
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # 10 minutes before scaling down workers
+      policies:
+      - type: Pods
+        value: 1   # Scale down 1 worker at a time
+        periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 60  # Wait 1 minute before scaling up more
+      policies:
+      - type: Pods
+        value: 2   # Add 2 workers at a time
+        periodSeconds: 60
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75  # Workers are CPU-intensive
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 85
+  # Scale based on queue depth (requires custom metrics)
+  # - type: External
+  #   external:
+  #     metric:
+  #       name: rabbitmq_queue_messages_ready
+  #       selector:
+  #         matchLabels:
+  #           queue: transcode_jobs
+  #     target:
+  #       type: AverageValue
+  #       averageValue: "10"  # Scale when > 10 messages per worker

@@ -1,0 +1,115 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/openwan/media-asset-management/internal/api"
+	"github.com/openwan/media-asset-management/internal/repository"
+	"github.com/openwan/media-asset-management/internal/service"
+	"github.com/openwan/media-asset-management/internal/session"
+	"github.com/openwan/media-asset-management/internal/storage"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func main() {
+	log.Println("Starting OpenWan API Server with Database Integration")
+
+	// Database connection - use environment variable or localhost
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	dbUser := os.Getenv("DB_USER")
+	if dbUser == "" {
+		dbUser = "openwan"
+	}
+	dbPassword := os.Getenv("DB_PASSWORD")
+	if dbPassword == "" {
+		dbPassword = "openwan123"
+	}
+	
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:3306)/openwan_db?charset=utf8mb4&parseTime=True&loc=Local", dbUser, dbPassword, dbHost)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	log.Println("✓ Database connected successfully")
+
+	// Initialize repository factory
+	repo := repository.NewRepository(db)
+
+	// Initialize services
+	aclService := service.NewACLService(repo)
+	usersService := service.NewUsersService(repo.Users(), repo.Groups(), repo.Levels())
+	fileService := service.NewFileService(repo)
+	categoryService := service.NewCategoryService(repo.Category()) // Use Category() not Categories()
+	catalogService := service.NewCatalogService(db) // CatalogService requires *gorm.DB directly
+	// SearchService requires Sphinx connection which we don't have yet, set to nil
+	var searchService *service.SearchService
+	groupService := service.NewGroupService(repo)
+	roleService := service.NewRoleService(repo)
+	permissionService := service.NewPermissionService(repo)
+	
+	// Initialize storage service
+	storageConfig := storage.LoadConfigFromEnv()
+	storageService, err := storage.NewStorageFromConfig(storageConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize storage service: %v", err)
+	}
+
+	// Initialize session store (Redis)
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	sessionStore, err := session.NewRedisStore(redisAddr, "", 0, 24*3600*time.Second) // 24 hour session TTL
+	if err != nil {
+		log.Fatalf("Failed to initialize session store: %v", err)
+	}
+	log.Println("✓ Session store (Redis) connected successfully")
+
+	// Setup dependencies for router
+	deps := &api.RouterDependencies{
+		SessionStore:      sessionStore,
+		ACLService:        aclService,
+		UsersService:      usersService,
+		FileService:       fileService,
+		CategoryService:   categoryService,
+		CatalogService:    catalogService,
+		SearchService:     searchService, // nil for now
+		GroupService:      groupService,
+		RoleService:       roleService,
+		PermissionService: permissionService,
+		StorageService:    storageService,
+	}
+
+	// Set Gin mode
+	gin.SetMode(gin.DebugMode)
+
+	// Setup router with dependencies
+	allowedOrigins := []string{"*"} // Allow all for development
+	router := api.SetupRouter(allowedOrigins, deps)
+
+	// Get port from environment or use default
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	// Start server
+	addr := fmt.Sprintf(":%s", port)
+	log.Printf("✓ OpenWan API Server starting on %s", addr)
+	log.Printf("  Health check: http://localhost%s/health", addr)
+	log.Printf("  API endpoint: http://localhost%s/api/v1/ping", addr)
+	log.Printf("  User management: http://localhost%s/api/v1/admin/users", addr)
+	log.Println("  Database: openwan_db @ 172.21.0.2:3306")
+
+	if err := router.Run(addr); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
+}

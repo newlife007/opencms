@@ -1,0 +1,106 @@
+{
+  "autoScalingGroupName": "openwan-api-asg",
+  "minSize": 2,
+  "maxSize": 10,
+  "desiredCapacity": 3,
+  "defaultCooldown": 300,
+  "healthCheckType": "ELB",
+  "healthCheckGracePeriod": 300,
+  "scalingPolicies": [
+    {
+      "policyName": "openwan-api-scale-out-cpu",
+      "policyType": "TargetTrackingScaling",
+      "targetTrackingConfiguration": {
+        "predefinedMetricSpecification": {
+          "predefinedMetricType": "ASGAverageCPUUtilization"
+        },
+        "targetValue": 70.0
+      }
+    },
+    {
+      "policyName": "openwan-api-scale-out-memory",
+      "policyType": "TargetTrackingScaling",
+      "targetTrackingConfiguration": {
+        "customizedMetricSpecification": {
+          "metricName": "MemoryUtilization",
+          "namespace": "CWAgent",
+          "statistic": "Average",
+          "dimensions": [
+            {
+              "name": "AutoScalingGroupName",
+              "value": "openwan-api-asg"
+            }
+          ]
+        },
+        "targetValue": 80.0
+      }
+    },
+    {
+      "policyName": "openwan-api-step-scaling-alb-requests",
+      "policyType": "StepScaling",
+      "adjustmentType": "PercentChangeInCapacity",
+      "stepAdjustments": [
+        {
+          "metricIntervalLowerBound": 0,
+          "metricIntervalUpperBound": 10,
+          "scalingAdjustment": 10
+        },
+        {
+          "metricIntervalLowerBound": 10,
+          "scalingAdjustment": 30
+        }
+      ],
+      "metricAggregationType": "Average"
+    }
+  ],
+  "scheduledActions": [
+    {
+      "scheduledActionName": "scale-up-business-hours",
+      "schedule": "0 8 * * MON-FRI",
+      "minSize": 3,
+      "maxSize": 10,
+      "desiredCapacity": 5
+    },
+    {
+      "scheduledActionName": "scale-down-night",
+      "schedule": "0 22 * * *",
+      "minSize": 2,
+      "maxSize": 10,
+      "desiredCapacity": 2
+    }
+  ],
+  "launchTemplate": {
+    "instanceType": "t3.medium",
+    "imageId": "ami-xxxxx",
+    "iamInstanceProfile": "openwan-api-instance-role",
+    "securityGroups": ["sg-xxxxx"],
+    "userData": "#!/bin/bash\\ncd /opt/openwan && ./start.sh",
+    "monitoring": {
+      "enabled": true
+    },
+    "blockDeviceMappings": [
+      {
+        "deviceName": "/dev/xvda",
+        "ebs": {
+          "volumeSize": 30,
+          "volumeType": "gp3",
+          "deleteOnTermination": true
+        }
+      }
+    ]
+  },
+  "tags": [
+    {
+      "key": "Name",
+      "value": "openwan-api-instance"
+    },
+    {
+      "key": "Environment",
+      "value": "production"
+    },
+    {
+      "key": "Application",
+      "value": "openwan"
+    }
+  ]
+}

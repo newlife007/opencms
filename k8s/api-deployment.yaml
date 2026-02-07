@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openwan
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openwan-api
+  namespace: openwan
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: openwan-api
+  template:
+    metadata:
+      labels:
+        app: openwan-api
+    spec:
+      containers:
+      - name: api
+        image: openwan/api:latest
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: OPENWAN_DATABASE_HOST
+          value: mysql-service
+        - name: OPENWAN_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openwan-secrets
+              key: database-password
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /alive
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openwan-api-service
+  namespace: openwan
+spec:
+  selector:
+    app: openwan-api
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: openwan-api-hpa
+  namespace: openwan
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: openwan-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

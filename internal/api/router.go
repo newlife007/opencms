@@ -1,0 +1,213 @@
+package api
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/openwan/media-asset-management/internal/api/handlers"
+	"github.com/openwan/media-asset-management/internal/api/handlers/admin"
+	"github.com/openwan/media-asset-management/internal/api/middleware"
+	"github.com/openwan/media-asset-management/internal/queue"
+	"github.com/openwan/media-asset-management/internal/service"
+	"github.com/openwan/media-asset-management/internal/session"
+	"github.com/openwan/media-asset-management/internal/storage"
+)
+
+// RouterDependencies holds all dependencies needed for router setup
+type RouterDependencies struct {
+	SessionStore      session.Store
+	ACLService        *service.ACLService
+	UsersService      *service.UsersService
+	FileService       *service.FileService
+	CategoryService   *service.CategoryService
+	CatalogService    *service.CatalogService
+	SearchService     *service.SearchService
+	GroupService      *service.GroupService
+	RoleService       *service.RoleService
+	PermissionService *service.PermissionService
+	LevelsService     *service.LevelsService
+	StorageService    storage.StorageService
+	QueueService      queue.QueueService
+}
+
+// SetupRouter creates and configures the Gin router
+func SetupRouter(allowedOrigins []string, deps *RouterDependencies) *gin.Engine {
+	// Create router
+	router := gin.New()
+	
+	// Add middleware
+	router.Use(middleware.Recovery())
+	router.Use(middleware.Logging())
+	router.Use(middleware.CORS(allowedOrigins))
+	
+	// Health check endpoints
+	router.GET("/health", handlers.HealthCheck())
+	router.GET("/ready", handlers.ReadyCheck())
+	router.GET("/alive", handlers.AliveCheck())
+	
+	// Set session store in middleware
+	middleware.SetSessionStore(deps.SessionStore)
+	
+	// Set ACL service in middleware for permission checking
+	middleware.SetACLService(deps.ACLService)
+	
+	// Initialize handlers
+	authHandler := handlers.NewAuthHandler(deps.ACLService, deps.SessionStore)
+	fileHandler := handlers.NewFileHandler(deps.FileService, deps.StorageService, deps.QueueService)
+	categoryHandler := handlers.NewCategoryHandler(deps.CategoryService)
+	catalogHandler := handlers.NewCatalogHandler(deps.CatalogService)
+	searchHandler := handlers.NewSearchHandler(deps.SearchService)
+	workflowHandler := handlers.NewWorkflowHandler(deps.FileService)
+	groupHandler := handlers.NewGroupHandler(deps.GroupService)
+	roleHandler := handlers.NewRoleHandler(deps.RoleService)
+	permissionHandler := handlers.NewPermissionHandler(deps.PermissionService)
+	
+	// New admin handlers
+	usersHandler := admin.NewUsersHandler(deps.UsersService)
+	levelsHandler := admin.NewLevelsHandler(deps.LevelsService)
+	
+	// API v1 routes
+	v1 := router.Group("/api/v1")
+	{
+		// Public routes
+		v1.GET("/ping", func(c *gin.Context) {
+			c.JSON(200, gin.H{"message": "pong"})
+		})
+		
+		// Authentication routes
+		auth := v1.Group("/auth")
+		{
+			auth.POST("/login", authHandler.Login())
+			auth.POST("/logout", authHandler.Logout())
+			auth.GET("/me", middleware.RequireAuth(), authHandler.GetCurrentUser())
+			auth.POST("/refresh", middleware.RequireAuth(), authHandler.RefreshToken())
+			auth.PUT("/profile", middleware.RequireAuth(), authHandler.UpdateProfile())
+			auth.POST("/change-password", middleware.RequireAuth(), authHandler.ChangePassword())
+		}
+		
+		// File routes
+		files := v1.Group("/files")
+		files.Use(middleware.RequireAuth()) // 所有文件操作都需要登录
+		{
+			files.GET("", middleware.RequirePermission("files.list.view"), fileHandler.ListFiles())
+			files.GET("/stats", middleware.RequirePermission("files.stats.view"), fileHandler.GetStats()) // Stats endpoint - must be before /:id
+			files.GET("/recent", middleware.RequirePermission("files.list.view"), fileHandler.GetRecentFiles()) // Recent files endpoint - must be before /:id
+			files.GET("/:id", middleware.RequirePermission("files.detail.view"), fileHandler.GetFile())
+			files.POST("", middleware.RequirePermission("files.upload.create"), fileHandler.Upload())
+			files.PUT("/:id", middleware.RequirePermission("files.edit.update"), fileHandler.UpdateFile())
+			files.DELETE("/:id", middleware.RequirePermission("files.edit.delete"), fileHandler.DeleteFile())
+			files.GET("/:id/download", middleware.RequirePermission("files.download.execute"), fileHandler.DownloadFile())
+			files.GET("/:id/preview", middleware.RequirePermission("files.preview.view"), fileHandler.PreviewFile()) // Preview endpoint
+			
+			// Workflow routes
+			files.POST("/:id/submit", middleware.RequirePermission("files.workflow.submit"), workflowHandler.SubmitForReview())
+			files.POST("/:id/publish", middleware.RequirePermission("files.workflow.publish"), workflowHandler.PublishFile())
+			files.POST("/:id/reject", middleware.RequirePermission("files.workflow.reject"), workflowHandler.RejectFile())
+			files.PUT("/:id/status", middleware.RequirePermission("files.workflow.manage"), workflowHandler.UpdateFileStatus())
+		}
+		
+		// Category routes
+		categories := v1.Group("/categories")
+		categories.Use(middleware.RequireAuth()) // 所有分类操作都需要登录
+		{
+			categories.GET("", middleware.RequirePermission("categories.list.view"), categoryHandler.ListCategories())
+			categories.GET("/tree", middleware.RequirePermission("categories.tree.view"), categoryHandler.GetCategoryTree()) // Tree structure endpoint - must be before /:id
+			categories.GET("/:id", middleware.RequirePermission("categories.detail.view"), categoryHandler.GetCategory())
+			categories.POST("", middleware.RequirePermission("categories.manage.create"), categoryHandler.CreateCategory())
+			categories.PUT("/:id", middleware.RequirePermission("categories.manage.update"), categoryHandler.UpdateCategory())
+			categories.DELETE("/:id", middleware.RequirePermission("categories.manage.delete"), categoryHandler.DeleteCategory())
+		}
+		
+		// Catalog routes
+		catalog := v1.Group("/catalog")
+		catalog.Use(middleware.RequireAuth()) // 所有目录配置操作都需要登录
+		{
+			catalog.GET("", middleware.RequirePermission("catalog.config.view"), catalogHandler.GetCatalogConfig()) // ?type=1
+			catalog.GET("/tree", middleware.RequirePermission("catalog.tree.view"), catalogHandler.GetCatalogTree()) // Tree endpoint - must be before /:id
+			catalog.GET("/all", middleware.RequirePermission("catalog.list.view"), catalogHandler.ListCatalogs())
+			catalog.GET("/:id", middleware.RequirePermission("catalog.detail.view"), catalogHandler.GetCatalog())
+			catalog.POST("", middleware.RequirePermission("catalog.config.create"), catalogHandler.CreateCatalog())
+			catalog.PUT("/:id", middleware.RequirePermission("catalog.config.update"), catalogHandler.UpdateCatalog())
+			catalog.DELETE("/:id", middleware.RequirePermission("catalog.config.delete"), catalogHandler.DeleteCatalog())
+		}
+		
+		// Search routes
+		search := v1.Group("/search")
+		search.Use(middleware.RequireAuth()) // 所有搜索操作都需要登录
+		{
+			search.GET("", middleware.RequirePermission("search.execute.query"), searchHandler.Search())
+			search.POST("", middleware.RequirePermission("search.execute.query"), searchHandler.Search())
+			search.GET("/suggestions", middleware.RequirePermission("search.suggestions.view"), searchHandler.GetSuggestions()) // Autocomplete suggestions
+			search.POST("/reindex", middleware.RequirePermission("search.admin.reindex"), searchHandler.Reindex())
+			search.GET("/status", middleware.RequirePermission("search.admin.status"), searchHandler.GetIndexStatus())
+		}
+		
+		// Admin routes
+		adminGroup := v1.Group("/admin")
+		adminGroup.Use(middleware.RequireAuth())
+		{
+			// User management - NEW implementation
+			users := adminGroup.Group("/users")
+			users.Use(middleware.RequirePermission("users.manage.view")) // 需要用户管理权限
+			{
+				users.GET("", usersHandler.ListUsers)
+				users.POST("/search", usersHandler.ListUsers) // POST for complex search
+				users.GET("/:id", usersHandler.GetUser)
+				users.POST("", middleware.RequirePermission("users.manage.create"), usersHandler.CreateUser)
+				users.PUT("/:id", middleware.RequirePermission("users.manage.update"), usersHandler.UpdateUser)
+				users.DELETE("/:id", middleware.RequirePermission("users.manage.delete"), usersHandler.DeleteUser)
+				users.POST("/batch-delete", middleware.RequirePermission("users.manage.delete"), usersHandler.BatchDeleteUsers)
+				users.POST("/:id/reset-password", middleware.RequirePermission("users.manage.resetpwd"), usersHandler.ResetUserPassword) // Admin reset password
+				users.PUT("/:id/status", middleware.RequirePermission("users.manage.status"), usersHandler.UpdateUserStatus) // Enable/disable user
+				users.GET("/:id/permissions", usersHandler.GetUserPermissions) // Get user permissions
+			}
+			
+			// Group management
+			groups := adminGroup.Group("/groups")
+			groups.Use(middleware.RequirePermission("groups.manage.view")) // 需要组管理权限
+			{
+				groups.GET("", groupHandler.ListGroups())
+				groups.POST("", middleware.RequirePermission("groups.manage.create"), groupHandler.CreateGroup())
+				groups.GET("/:id", groupHandler.GetGroup())
+				groups.PUT("/:id", middleware.RequirePermission("groups.manage.update"), groupHandler.UpdateGroup())
+				groups.DELETE("/:id", middleware.RequirePermission("groups.manage.delete"), groupHandler.DeleteGroup())
+				groups.POST("/:id/categories", middleware.RequirePermission("groups.manage.assign"), groupHandler.AssignCategories())
+				groups.POST("/:id/roles", middleware.RequirePermission("groups.manage.assign"), groupHandler.AssignRoles())
+			}
+			
+			// Role management
+			roles := adminGroup.Group("/roles")
+			roles.Use(middleware.RequirePermission("roles.manage.view")) // 需要角色管理权限
+			{
+				roles.GET("", roleHandler.ListRoles())
+				roles.POST("", middleware.RequirePermission("roles.manage.create"), roleHandler.CreateRole())
+				roles.GET("/:id", roleHandler.GetRole())
+				roles.PUT("/:id", middleware.RequirePermission("roles.manage.update"), roleHandler.UpdateRole())
+				roles.DELETE("/:id", middleware.RequirePermission("roles.manage.delete"), roleHandler.DeleteRole())
+				roles.POST("/:id/permissions", middleware.RequirePermission("roles.manage.assign"), roleHandler.AssignPermissions())
+			}
+			
+			// Permission management
+			permissions := adminGroup.Group("/permissions")
+			permissions.Use(middleware.RequirePermission("permissions.manage.view")) // 需要权限管理查看权限
+			{
+				permissions.GET("", permissionHandler.ListPermissions())
+				permissions.GET("/:id", permissionHandler.GetPermission())
+			}
+			
+			// Levels management
+			levels := adminGroup.Group("/levels")
+			levels.Use(middleware.RequirePermission("levels.manage.view")) // 需要级别管理权限
+			{
+				levels.GET("", levelsHandler.ListLevels)
+				levels.GET("/:id", levelsHandler.GetLevel)
+				levels.POST("", middleware.RequirePermission("levels.manage.create"), levelsHandler.CreateLevel)
+				levels.PUT("/:id", middleware.RequirePermission("levels.manage.update"), levelsHandler.UpdateLevel)
+				levels.DELETE("/:id", middleware.RequirePermission("levels.manage.delete"), levelsHandler.DeleteLevel)
+			}
+			
+			// Workflow statistics
+			adminGroup.GET("/workflow/stats", middleware.RequirePermission("workflow.stats.view"), workflowHandler.GetWorkflowStats())
+		}
+	}
+	
+	return router
+}

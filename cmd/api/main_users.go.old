@@ -1,0 +1,136 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/gin-gonic/gin"
+	"github.com/openwan/media-asset-management/internal/api/handlers/admin"
+	"github.com/openwan/media-asset-management/internal/repository"
+	"github.com/openwan/media-asset-management/internal/service"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+)
+
+func main() {
+	log.Println("Starting OpenWan User Management API Server")
+
+	// Database connection
+	dsn := "openwan:openwan123@tcp(172.21.0.2:3306)/openwan_db?charset=utf8mb4&parseTime=True&loc=Local"
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	log.Println("✓ Database connected successfully")
+
+	// Initialize repositories
+	usersRepo := repository.NewUsersRepository(db)
+	groupsRepo := repository.NewGroupsRepository(db)
+	levelsRepo := repository.NewLevelsRepository(db)
+
+	// Initialize services
+	usersService := service.NewUsersService(usersRepo, groupsRepo, levelsRepo)
+
+	// Initialize handlers
+	usersHandler := admin.NewUsersHandler(usersService)
+
+	// Set Gin mode
+	gin.SetMode(gin.DebugMode)
+
+	// Create router
+	r := gin.Default()
+
+	// CORS middleware
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusOK)
+			return
+		}
+
+		c.Next()
+	})
+
+	// Health check endpoints
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "healthy",
+			"service": "openwan-user-management",
+			"version": "1.0.0",
+		})
+	})
+
+	r.GET("/ready", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "ready",
+		})
+	})
+
+	r.GET("/alive", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"status": "alive",
+		})
+	})
+
+	// API routes
+	api := r.Group("/api/v1")
+	{
+		// Ping endpoint
+		api.GET("/ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"code": 0,
+				"msg":  "pong",
+			})
+		})
+
+		// Admin routes for user management
+		adminGroup := api.Group("/admin")
+		// Note: Temporarily disabled RequireAuth middleware for testing
+		// adminGroup.Use(middleware.RequireAuth())
+		{
+			users := adminGroup.Group("/users")
+			{
+				users.GET("", usersHandler.ListUsers)
+				users.POST("/search", usersHandler.ListUsers) // POST for complex search
+				users.GET("/:id", usersHandler.GetUser)
+				users.POST("", usersHandler.CreateUser)
+				users.PUT("/:id", usersHandler.UpdateUser)
+				users.DELETE("/:id", usersHandler.DeleteUser)
+				users.POST("/batch-delete", usersHandler.BatchDeleteUsers)
+			}
+		}
+	}
+
+	// Get port from environment or use default
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	// Start server
+	addr := fmt.Sprintf(":%s", port)
+	log.Printf("✓ OpenWan User Management API Server starting on %s", addr)
+	log.Printf("  Health check: http://localhost%s/health", addr)
+	log.Printf("  Ping: http://localhost%s/api/v1/ping", addr)
+	log.Printf("  Users API: http://localhost%s/api/v1/admin/users", addr)
+	log.Println("")
+	log.Println("Available endpoints:")
+	log.Println("  GET    /api/v1/admin/users           - List users")
+	log.Println("  POST   /api/v1/admin/users/search    - Search users (JSON body)")
+	log.Println("  GET    /api/v1/admin/users/:id       - Get user by ID")
+	log.Println("  POST   /api/v1/admin/users           - Create user")
+	log.Println("  PUT    /api/v1/admin/users/:id       - Update user")
+	log.Println("  DELETE /api/v1/admin/users/:id       - Delete user")
+	log.Println("  POST   /api/v1/admin/users/batch-delete - Batch delete users")
+	log.Println("")
+	log.Println("  Database: openwan_db @ 172.21.0.2:3306")
+
+	if err := r.Run(addr); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
+}

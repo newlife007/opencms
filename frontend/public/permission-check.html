@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OpenWan 用户权限检查</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .card { background: white; padding: 20px; margin: 10px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .success { color: #67c23a; font-weight: bold; }
+        .error { color: #f56c6c; font-weight: bold; }
+        .warning { color: #e6a23c; font-weight: bold; }
+        .info { color: #409eff; font-weight: bold; }
+        pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; }
+        h2 { color: #303133; border-bottom: 2px solid #409eff; padding-bottom: 10px; }
+        code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+        ul { line-height: 1.8; }
+    </style>
+</head>
+<body>
+    <h1>🔐 OpenWan 用户权限检查工具</h1>
+    
+    <div class="card">
+        <h2>问题分析</h2>
+        <p class="error">❌ 访问 /admin/* 路由时跳转到了 Dashboard</p>
+        <p>这说明：<strong>当前用户没有管理员权限</strong></p>
+        <p>路由守卫检测到 <code>requiresAdmin: true</code> 但用户不是admin，所以重定向到 /dashboard</p>
+    </div>
+
+    <div class="card">
+        <h2>检查步骤</h2>
+        <h3>步骤1：打开开发者工具</h3>
+        <ol>
+            <li>在 OpenWan 前端页面（http://localhost:3000/）按 <code>F12</code></li>
+            <li>切换到 <strong>Application</strong> 标签（Chrome）或 <strong>Storage</strong> 标签（Firefox）</li>
+            <li>左侧找到 <strong>Local Storage</strong> → <code>http://localhost:3000</code></li>
+            <li>查看是否有 <code>token</code> 键</li>
+        </ol>
+
+        <h3>步骤2：检查用户信息</h3>
+        <p>在 Console 标签中执行以下代码：</p>
+        <pre>
+// 方法1：检查 localStorage
+console.log('Token:', localStorage.getItem('token'));
+
+// 方法2：检查 Pinia store（需要在页面加载后执行）
+// 刷新页面后等待几秒，然后执行：
+const app = document.querySelector('#app').__vue_app__;
+const pinia = app._context.provides[Symbol.for('pinia')];
+const stores = pinia._s;
+const userStore = Array.from(stores.values()).find(s => s.$id === 'user');
+
+if (userStore) {
+    console.log('✅ User Store 找到');
+    console.log('用户信息:', userStore.user);
+    console.log('角色列表:', userStore.roles);
+    console.log('权限列表:', userStore.permissions);
+    console.log('是否管理员:', userStore.isAdmin());
+} else {
+    console.log('❌ User Store 未找到');
+}
+        </pre>
+    </div>
+
+    <div class="card">
+        <h2>预期输出</h2>
+        <p class="info">如果用户是管理员，应该看到：</p>
+        <pre>
+✅ User Store 找到
+用户信息: { username: "admin", email: "admin@example.com", ... }
+角色列表: ["admin"]  或  ["system"]
+权限列表: [...]
+是否管理员: true
+        </pre>
+
+        <p class="error">如果用户不是管理员，会看到：</p>
+        <pre>
+✅ User Store 找到
+用户信息: { username: "user1", email: "user@example.com", ... }
+角色列表: []  或  ["user", "editor"]
+权限列表: [...]
+是否管理员: false  ← 这就是问题！
+        </pre>
+    </div>
+
+    <div class="card">
+        <h2>🔧 解决方案</h2>
+        
+        <h3>方案1：使用管理员账号登录（推荐）</h3>
+        <ol>
+            <li>退出当前账号</li>
+            <li>使用管理员账号登录（用户名通常是 <code>admin</code>）</li>
+            <li>登录后再次访问 /admin/permissions</li>
+        </ol>
+
+        <h3>方案2：给当前用户添加管理员角色（需要后端操作）</h3>
+        <p>需要在数据库中给当前用户分配admin角色：</p>
+        <pre>
+-- 查询当前用户ID（假设用户名是 user1）
+SELECT id FROM ow_users WHERE username = 'user1';
+
+-- 查询admin角色ID
+SELECT id FROM ow_roles WHERE name = 'admin';
+
+-- 查询用户所属组
+SELECT group_id FROM ow_users WHERE username = 'user1';
+
+-- 给用户的组分配admin角色（假设用户组ID是2，角色ID是1）
+INSERT INTO ow_groupshasroles (group_id, role_id) 
+VALUES (2, 1) 
+ON DUPLICATE KEY UPDATE group_id=group_id;
+        </pre>
+
+        <h3>方案3：临时移除requiresAdmin检查（仅用于测试）</h3>
+        <p class="warning">⚠️ 仅用于开发测试，不要在生产环境使用！</p>
+        <p>修改 <code>/frontend/src/router/index.js</code>：</p>
+        <pre>
+// 找到这段代码（约147行）：
+if (to.meta.requiresAdmin && !userStore.isAdmin()) {
+  next({ path: '/dashboard' })
+  return
+}
+
+// 临时注释掉：
+// if (to.meta.requiresAdmin && !userStore.isAdmin()) {
+//   next({ path: '/dashboard' })
+//   return
+// }
+        </pre>
+        <p>保存后Vite会自动重新加载。</p>
+    </div>
+
+    <div class="card">
+        <h2>🔍 检查菜单是否显示的逻辑</h2>
+        <p>即使路由已配置，菜单也可能不显示，因为 <code>MainLayout.vue</code> 中有过滤逻辑：</p>
+        <pre>
+const menuRoutes = computed(() => {
+  const routes = router.options.routes.find(r => r.path === '/')?.children || []
+  return routes.filter(route => {
+    if (route.meta?.hidden) return false
+    if (route.meta?.requiresAdmin && !userStore.isAdmin()) return false  ← 这里！
+    return true
+  })
+})
+        </pre>
+        <p>如果 <code>userStore.isAdmin()</code> 返回 false，整个"系统管理"菜单都不会显示。</p>
+    </div>
+
+    <div class="card">
+        <h2>📝 快速测试</h2>
+        <p>在 Console 中快速测试当前用户权限：</p>
+        <pre>
+// 刷新页面后执行
+setTimeout(() => {
+    const app = document.querySelector('#app')?.__vue_app__;
+    if (!app) {
+        console.log('❌ Vue app not found');
+        return;
+    }
+    
+    const pinia = app._context.provides[Symbol.for('pinia')];
+    if (!pinia) {
+        console.log('❌ Pinia not found');
+        return;
+    }
+    
+    const userStore = Array.from(pinia._s.values()).find(s => s.$id === 'user');
+    if (!userStore) {
+        console.log('❌ User store not found');
+        return;
+    }
+    
+    console.log('========== 用户权限检查 ==========');
+    console.log('👤 用户名:', userStore.user?.username || '未登录');
+    console.log('📧 邮箱:', userStore.user?.email || 'N/A');
+    console.log('🎭 角色:', userStore.roles);
+    console.log('🔑 权限数量:', userStore.permissions.length);
+    console.log('👑 是否管理员:', userStore.isAdmin() ? '✅ 是' : '❌ 否');
+    console.log('=================================');
+    
+    if (!userStore.isAdmin()) {
+        console.log('');
+        console.log('⚠️  当前用户不是管理员！');
+        console.log('💡 解决方案：');
+        console.log('   1. 使用admin账号登录');
+        console.log('   2. 或在数据库中给当前用户分配admin角色');
+    }
+}, 2000);
+        </pre>
+        <p>复制上面的代码，刷新页面后粘贴到Console执行。</p>
+    </div>
+
+    <div class="card">
+        <h2>📞 下一步</h2>
+        <p class="info">请告诉我：</p>
+        <ul>
+            <li>✅ 执行检查脚本后，<strong>是否管理员</strong> 显示什么？（true/false）</li>
+            <li>✅ <strong>角色列表</strong> 包含什么？（["admin"], ["user"], 还是 []）</li>
+            <li>✅ 当前登录的<strong>用户名</strong>是什么？</li>
+        </ul>
+        <p>根据结果，我可以提供更具体的解决方案！</p>
+    </div>
+</body>
+</html>

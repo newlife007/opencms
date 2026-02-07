@@ -1,0 +1,31 @@
+{
+  "name": "openwan-frontend",
+  "version": "1.0.0",
+  "description": "OpenWan Media Asset Management System - Frontend",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.1.0",
+    "axios": "^1.5.0",
+    "element-plus": "^2.3.14",
+    "flv.js": "^1.6.2",
+    "pinia": "^2.1.6",
+    "video.js": "^8.5.2",
+    "videojs-flvjs-es6": "^1.0.0",
+    "vue": "^3.3.4",
+    "vue-i18n": "^9.14.5",
+    "vue-router": "^4.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.3.4",
+    "@vue/eslint-config-prettier": "^8.0.0",
+    "eslint": "^8.49.0",
+    "eslint-plugin-vue": "^9.17.0",
+    "prettier": "^3.0.3",
+    "vite": "^4.4.9"
+  }
+}
