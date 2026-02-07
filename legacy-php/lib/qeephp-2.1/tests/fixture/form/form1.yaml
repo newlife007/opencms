@@ -1,6 +1,0 @@
-
-~form:
-  name: "form1-name"
-  action: "http://www.example.com/login"
-  method: "get"
-
