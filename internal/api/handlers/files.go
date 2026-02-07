@@ -18,6 +18,7 @@ import (
 	"github.com/openwan/media-asset-management/internal/queue"
 	"github.com/openwan/media-asset-management/internal/service"
 	"github.com/openwan/media-asset-management/internal/storage"
+	"github.com/openwan/media-asset-management/internal/transcoding"
 )
 
 // FileHandler handles file operations
@@ -258,7 +259,7 @@ func (h *FileHandler) Upload() gin.HandlerFunc {
 			// Marshal to JSON
 			jobData, err := json.Marshal(transcodeJob)
 			if err == nil {
-				// Publish to queue (non-blocking, log error but don't fail upload)
+				// Create message for queue
 				message := &queue.Message{
 					ID:        fmt.Sprintf("transcode-%d-%d", fileRecord.ID, time.Now().Unix()),
 					Body:      string(jobData),
@@ -269,18 +270,24 @@ func (h *FileHandler) Upload() gin.HandlerFunc {
 					},
 				}
 				
-				// Publish in background
+				// Try to publish to queue (non-blocking)
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
 					if err := h.queueService.Publish(ctx, "openwan_transcoding_jobs", message); err != nil {
-						// Log error (TODO: add proper logging)
-						fmt.Printf("Failed to publish transcode job for file %d: %v\n", fileRecord.ID, err)
+						fmt.Printf("⚠ Queue unavailable for file %d, using sync transcode: %v\n", fileRecord.ID, err)
+						// Queue is not available, trigger sync transcode
+						h.syncTranscodeVideo(fileRecord, uploadedPath, storageType)
 					} else {
 						fmt.Printf("✓ Transcode job published for file %d (type %d)\n", fileRecord.ID, fileRecord.Type)
 					}
 				}()
 			}
+		} else if fileRecord.Type == 1 || fileRecord.Type == 2 {
+			// No queue service, do sync transcode for video/audio
+			storageType := "s3" // Assuming S3 for now
+			fmt.Printf("⚠ No queue service available, using sync transcode for file %d\n", fileRecord.ID)
+			go h.syncTranscodeVideo(fileRecord, uploadedPath, storageType)
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -550,10 +557,10 @@ func (h *FileHandler) PreviewFile() gin.HandlerFunc {
 		
 		// For video and audio files, try preview first, then fall back to original
 		if file.Type == models.FileTypeVideo || file.Type == models.FileTypeAudio {
-			// Try preview file: {name}-preview.flv
-			dir := filepath.Dir(file.Path)
-			previewFilename := file.Name + "-preview.flv"
-			previewPath := filepath.Join(dir, previewFilename)
+			// Try preview file: replace extension with -preview.flv
+			// Use string manipulation to handle S3 paths correctly
+			ext := filepath.Ext(file.Path)
+			previewPath := strings.TrimSuffix(file.Path, ext) + "-preview.flv"
 			
 			reader, err = h.storageService.Download(c.Request.Context(), previewPath)
 			if err != nil {
@@ -839,4 +846,106 @@ func (h *FileHandler) GetRecentFiles() gin.HandlerFunc {
 			"total":   len(files),
 		})
 	}
+}
+
+// syncTranscodeVideo performs synchronous video transcoding
+// This is a fallback when RabbitMQ queue is not available
+func (h *FileHandler) syncTranscodeVideo(fileRecord *models.Files, inputPath, storageType string) {
+	fmt.Printf("🎬 Starting sync transcode for file %d (%s)\n", fileRecord.ID, inputPath)
+	
+	// Create FFmpeg wrapper
+	ffmpegWrapper := transcoding.NewFFmpegWrapper("/usr/local/bin/ffmpeg", "")
+	
+	outputPath := strings.TrimSuffix(inputPath, filepath.Ext(inputPath)) + "-preview.flv"
+	parameters := "-y -ab 56 -ar 22050 -r 15 -b 500 -s 320x240"
+	
+	var inputFile, outputFile string
+	
+	if storageType == "s3" {
+		// Download from S3 to temp file
+		tempDir := "/tmp/openwan-transcode"
+		os.MkdirAll(tempDir, 0755)
+		
+		inputFile = filepath.Join(tempDir, fmt.Sprintf("input-%d%s", fileRecord.ID, filepath.Ext(inputPath)))
+		outputFile = filepath.Join(tempDir, fmt.Sprintf("output-%d.flv", fileRecord.ID))
+		
+		fmt.Printf("  ⬇  Downloading from S3: %s -> %s\n", inputPath, inputFile)
+		
+		// Download from S3
+		ctx := context.Background()
+		reader, err := h.storageService.Download(ctx, inputPath)
+		if err != nil {
+			fmt.Printf("  ❌ Failed to download from S3: %v\n", err)
+			return
+		}
+		defer reader.Close()
+		
+		// Write to temp file
+		f, err := os.Create(inputFile)
+		if err != nil {
+			fmt.Printf("  ❌ Failed to create temp file: %v\n", err)
+			return
+		}
+		defer f.Close()
+		defer os.Remove(inputFile) // Clean up
+		
+		if _, err := io.Copy(f, reader); err != nil {
+			fmt.Printf("  ❌ Failed to write temp file: %v\n", err)
+			return
+		}
+		f.Close()
+		
+		fmt.Printf("  ✓ Downloaded %s\n", inputFile)
+	} else {
+		inputFile = inputPath
+		outputFile = outputPath
+	}
+	
+	// Transcode
+	fmt.Printf("  🎥 Transcoding: %s -> %s\n", inputFile, outputFile)
+	fmt.Printf("  📝 Parameters: %s\n", parameters)
+	
+	ctx := context.Background()
+	opts := transcoding.TranscodeOptions{
+		InputPath:    inputFile,
+		OutputPath:   outputFile,
+		CustomParams: parameters,
+	}
+	
+	if err := ffmpegWrapper.Transcode(ctx, opts); err != nil {
+		fmt.Printf("  ❌ Transcode failed: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("  ✓ Transcode completed: %s\n", outputFile)
+	
+	// Upload output to S3 if needed
+	if storageType == "s3" {
+		defer os.Remove(outputFile) // Clean up
+		
+		fmt.Printf("  ⬆  Uploading to S3: %s -> %s\n", outputFile, outputPath)
+		
+		f, err := os.Open(outputFile)
+		if err != nil {
+			fmt.Printf("  ❌ Failed to open output file: %v\n", err)
+			return
+		}
+		defer f.Close()
+		
+		ctx := context.Background()
+		metadata := map[string]string{
+			"Content-Type":  "video/x-flv",
+			"original-file": strconv.FormatUint(uint64(fileRecord.ID), 10),
+			"transcode-date": time.Now().Format(time.RFC3339),
+		}
+		
+		if _, err := h.storageService.Upload(ctx, outputPath, f, metadata); err != nil {
+			fmt.Printf("  ❌ Failed to upload to S3: %v\n", err)
+			return
+		}
+		
+		fmt.Printf("  ✓ Uploaded preview to S3: %s\n", outputPath)
+	}
+	
+	fmt.Printf("✅ Transcode completed for file %d\n", fileRecord.ID)
 }

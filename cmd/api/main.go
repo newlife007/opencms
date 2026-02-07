@@ -1,12 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"gorm.io/gorm/logger"
@@ -239,30 +236,6 @@ func main() {
 	// Create server
 	server := api.NewServer(router, ":"+port)
 
-	// Setup graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-quit
-		fmt.Println("\n\nShutting down server...")
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		if err := server.Stop(ctx); err != nil {
-			log.Printf("Server forced to shutdown: %v", err)
-		}
-
-		if sessionStore != nil {
-			sessionStore.Close()
-		}
-
-		database.Close()
-		fmt.Println("Server stopped gracefully")
-		os.Exit(0)
-	}()
-
 	// Start server
 	fmt.Println()
 	fmt.Println("========================================")
@@ -276,8 +249,21 @@ func main() {
 	fmt.Println("========================================")
 	fmt.Println()
 	
+	// server.Start() handles signal listening and graceful shutdown internally
 	if err := server.Start(); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start server: %v\n", err)
+		// Cleanup on error
+		if sessionStore != nil {
+			sessionStore.Close()
+		}
+		database.Close()
 		os.Exit(1)
 	}
+	
+	// Cleanup after server stops
+	if sessionStore != nil {
+		sessionStore.Close()
+	}
+	database.Close()
+	fmt.Println("Server exited")
 }

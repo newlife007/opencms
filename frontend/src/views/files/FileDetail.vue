@@ -390,7 +390,7 @@ const fileId = computed(() => route.params.id)
 
 // 视频预览URL和类型
 const videoUrl = ref('')
-const videoType = ref('video/mp4')
+const videoType = ref('video/x-flv') // Preview files are transcoded to FLV format
 
 const previewUrl = computed(() => {
   return videoUrl.value
@@ -423,18 +423,20 @@ const setupVideoUrl = async () => {
   try {
     const response = await fetch(previewFileUrl, { method: 'HEAD' })
     if (response.ok) {
-      // 预览文件存在，但使用mp4类型避免FLV插件问题
+      // 预览文件存在，使用FLV格式（FLV.js已集成）
       videoUrl.value = previewFileUrl
-      videoType.value = 'video/mp4'
+      videoType.value = 'video/x-flv'
+      console.log('Using preview file (FLV):', previewFileUrl)
       return
     }
   } catch (e) {
-    // 预览文件不存在
+    console.warn('Preview file not available, will use original file:', e)
   }
 
   // 使用原始文件
   videoUrl.value = filesApi.getDownloadUrl(fileId.value)
   videoType.value = getMimeType(fileInfo.value.ext || '.mp4')
+  console.log('Using original file:', videoUrl.value, 'type:', videoType.value)
 }
 
 const catalogInfo = computed(() => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,11 +43,14 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 	var awsCfg aws.Config
 	var err error
 	
-	if cfg.UseIAMRole {
-		// Use IAM role credentials
+	// Check if static credentials are provided and not empty
+	hasStaticCredentials := cfg.AccessKeyID != "" && cfg.SecretAccessKey != ""
+	
+	if cfg.UseIAMRole || !hasStaticCredentials {
+		// Use IAM role credentials or default credential chain (includes ~/.aws/credentials)
 		awsCfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(cfg.Region))
 	} else {
-		// Use provided credentials
+		// Use provided static credentials
 		awsCfg, err = config.LoadDefaultConfig(ctx,
 			config.WithRegion(cfg.Region),
 			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
@@ -76,8 +80,16 @@ func NewS3Storage(cfg S3Config) (*S3Storage, error) {
 
 // Upload uploads a file to S3
 func (s *S3Storage) Upload(ctx context.Context, filename string, content io.Reader, metadata map[string]string) (string, error) {
-	// Generate S3 key with same structure as local storage
-	key := s.generateS3Key(filename)
+	// Check if filename already contains date path structure (e.g., starts with prefix/YYYY/MM/DD/)
+	// If so, use it as-is; otherwise generate S3 key with date structure
+	var key string
+	if s.isFullPath(filename) {
+		// Already a full path (e.g., from transcoding job), use as-is
+		key = filename
+	} else {
+		// Generate S3 key with date structure for new uploads
+		key = s.generateS3Key(filename)
+	}
 	
 	// Prepare S3 metadata
 	s3Metadata := make(map[string]string)
@@ -177,4 +189,37 @@ func (s *S3Storage) generateS3Key(filename string) string {
 		filename,
 	)
 	return strings.TrimPrefix(key, "/")
+}
+
+// isFullPath checks if the given path already contains date structure (YYYY/MM/DD)
+func (s *S3Storage) isFullPath(path string) bool {
+	// Check if path matches pattern: prefix/YYYY/MM/DD/...
+	// or just YYYY/MM/DD/... (4 digits / 2 digits / 2 digits)
+	parts := strings.Split(path, "/")
+	
+	// Need at least 4 parts: prefix, year, month, day, filename
+	if len(parts) < 4 {
+		return false
+	}
+	
+	// Check if any consecutive 3 parts match YYYY/MM/DD pattern
+	for i := 0; i < len(parts)-2; i++ {
+		year := parts[i]
+		month := parts[i+1]
+		day := parts[i+2]
+		
+		// Check if year is 4 digits, month and day are 2 digits
+		if len(year) == 4 && len(month) == 2 && len(day) == 2 {
+			// Try to parse as numbers
+			if _, err := strconv.Atoi(year); err == nil {
+				if _, err := strconv.Atoi(month); err == nil {
+					if _, err := strconv.Atoi(day); err == nil {
+						return true
+					}
+				}
+			}
+		}
+	}
+	
+	return false
 }

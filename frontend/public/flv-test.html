@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FLV.js Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/flv.js@1.6.2/dist/flv.min.js"></script>
+</head>
+<body>
+    <h1>FLV.js Direct Test</h1>
+    <video id="videoElement" controls width="800" height="600"></video>
+    
+    <div id="logs" style="margin-top: 20px; font-family: monospace; white-space: pre;"></div>
+
+    <script>
+        const logs = document.getElementById('logs');
+        function log(msg) {
+            console.log(msg);
+            logs.textContent += msg + '\n';
+        }
+
+        if (flvjs.isSupported()) {
+            log('✓ FLV.js is supported');
+            
+            var videoElement = document.getElementById('videoElement');
+            var flvPlayer = flvjs.createPlayer({
+                type: 'flv',
+                url: 'http://13.217.210.142/api/v1/files/32/preview',
+                isLive: false,
+                cors: true,
+                withCredentials: true
+            }, {
+                enableWorker: false,
+                enableStashBuffer: true,
+                stashInitialSize: 128
+            });
+            
+            flvPlayer.attachMediaElement(videoElement);
+            
+            flvPlayer.on(flvjs.Events.ERROR, function(errorType, errorDetail, errorInfo) {
+                log('✗ FLV Error: ' + errorType + ' - ' + errorDetail);
+                log('Error info: ' + JSON.stringify(errorInfo));
+            });
+            
+            flvPlayer.on(flvjs.Events.LOADING_COMPLETE, function() {
+                log('✓ Loading complete');
+            });
+            
+            flvPlayer.on(flvjs.Events.MEDIA_INFO, function(mediaInfo) {
+                log('✓ Media info: ' + JSON.stringify(mediaInfo));
+            });
+            
+            flvPlayer.load();
+            log('✓ FLV player loaded');
+            
+        } else {
+            log('✗ FLV.js is NOT supported in this browser');
+        }
+    </script>
+</body>
+</html>

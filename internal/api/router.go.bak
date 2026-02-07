@@ -96,7 +96,6 @@ func SetupRouter(allowedOrigins []string, deps *RouterDependencies) *gin.Engine 
 			files.DELETE("/:id", middleware.RequirePermission("files.edit.delete"), fileHandler.DeleteFile())
 			files.GET("/:id/download", middleware.RequirePermission("files.download.execute"), fileHandler.DownloadFile())
 			 files.GET("/:id/preview", middleware.RequirePermission("files.preview.view"), fileHandler.PreviewFile())
-			files.HEAD("/:id/preview", middleware.RequirePermission("files.preview.view"), fileHandler.PreviewFile()) // HEAD support for video players
 			
 			// Workflow routes
 			files.POST("/:id/submit", middleware.RequirePermission("files.workflow.submit"), workflowHandler.SubmitForReview())
