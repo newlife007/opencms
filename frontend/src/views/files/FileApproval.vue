@@ -302,6 +302,7 @@ import {
   Warning
 } from '@element-plus/icons-vue'
 import axios from '@/utils/request'
+import filesApi from '@/api/files'
 
 
 const { t } = useI18n()
@@ -460,6 +461,7 @@ const viewFile = (fileId) => {
 
 // 通过文件
 const approveFile = (fileId) => {
+  console.log('通过文件按钮被点击，文件ID:', fileId)
   approvalForm.action = 'approve'
   approvalForm.fileId = fileId
   approvalForm.comment = ''
@@ -469,6 +471,7 @@ const approveFile = (fileId) => {
 
 // 拒绝文件
 const rejectFile = (fileId) => {
+  console.log('拒绝文件按钮被点击，文件ID:', fileId)
   approvalForm.action = 'reject'
   approvalForm.fileId = fileId
   approvalForm.comment = ''
@@ -478,6 +481,8 @@ const rejectFile = (fileId) => {
 
 // 提交审批
 const submitApproval = async () => {
+  console.log('提交审批，action:', approvalForm.action, 'fileId:', approvalForm.fileId)
+  
   if (approvalForm.action === 'reject' && !approvalForm.comment) {
     ElMessage.warning('请输入拒绝原因')
     return
@@ -485,20 +490,25 @@ const submitApproval = async () => {
 
   submitting.value = true
   try {
-    const status = approvalForm.action === 'approve' ? 2 : 3
+    if (approvalForm.action === 'approve') {
+      // 调用发布API（与详情页的发布按钮一致）
+      console.log('调用发布API:', `/files/${approvalForm.fileId}/publish`)
+      await filesApi.publish(approvalForm.fileId)
+      ElMessage.success('审批通过成功')
+    } else {
+      // 调用拒绝API（与详情页的拒绝按钮一致）
+      console.log('调用拒绝API:', `/files/${approvalForm.fileId}/reject`, '原因:', approvalForm.comment)
+      await filesApi.reject(approvalForm.fileId, { reason: approvalForm.comment })
+      ElMessage.success('已拒绝该文件')
+    }
     
-    await axios.put(`/files/${approvalForm.fileId}`, {
-      status,
-      comment: approvalForm.comment
-    })
-
-    ElMessage.success(approvalForm.action === 'approve' ? '审批通过成功' : '已拒绝该文件')
     dialogVisible.value = false
     
     // 刷新列表和统计
     await Promise.all([fetchFiles(), fetchStats()])
 
   } catch (error) {
+    console.error('审批失败:', error)
     ElMessage.error('操作失败：' + (error.response?.data?.message || error.message))
   } finally {
     submitting.value = false
@@ -530,8 +540,9 @@ const batchApprove = async () => {
       type: 'success'
     })
 
+    // 使用发布API批量处理
     const promises = selectedFiles.value.map(file =>
-      axios.put(`/files/${file.id}`, { status: 2 })
+      filesApi.publish(file.id)
     )
 
     await Promise.all(promises)
@@ -558,8 +569,9 @@ const batchReject = async () => {
       }
     })
 
+    // 使用拒绝API批量处理
     const promises = selectedFiles.value.map(file =>
-      axios.put(`/files/${file.id}`, { status: 3, comment })
+      filesApi.reject(file.id, { reason: comment })
     )
 
     await Promise.all(promises)
