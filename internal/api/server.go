@@ -25,9 +25,9 @@ func NewServer(router *gin.Engine, addr string) *Server {
 		server: &http.Server{
 			Addr:           addr,
 			Handler:        router,
-			ReadTimeout:    30 * time.Second,
-			WriteTimeout:   30 * time.Second,
-			MaxHeaderBytes: 1 << 20, // 1 MB
+			ReadTimeout:    24 * time.Hour, // 24 hours for large file uploads
+			WriteTimeout:   24 * time.Hour, // 24 hours for large file downloads
+			MaxHeaderBytes: 1 << 20,        // 1 MB
 		},
 	}
 }
